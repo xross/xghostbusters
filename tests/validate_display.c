@@ -2,13 +2,13 @@
    clang -std=c99 -fsanitize=address,undefined -g -Iapp_xghostbusters/src
      tests/validate_display.c app_xghostbusters/src/game.c -o /tmp/validate_display
    /tmp/validate_display [preview.ppm]
-    The optional image shows title, gameplay, game-over, boss and traps. */
+     The optional image includes title, gameplay, boss, traps and haunted locations. */
 #include <assert.h>
 #include <stdlib.h>
 #define DISPLAY_HOST_PREVIEW
 #include "../app_xghostbusters/src/display.c"
 
-#define PREVIEW_WIDTH 1200
+#define PREVIEW_WIDTH 2400
 static uint16_t preview[320][PREVIEW_WIDTH];
 
 static void check_frame(const game_t *g,int panel) {
@@ -44,6 +44,13 @@ int main(int argc,char **argv) {
     for(unsigned i=0;i<3;++i)
         traps.effects[i]=(game_effect_t){140+(int)i*20,i,4+i*11,i};
     check_frame(&traps,4);
+    game_t scenery=traps;
+    memset(scenery.effects,0,sizeof(scenery.effects));
+    scenery.slimer=(game_slimer_t){169,1,1,38,2,2,0};
+    for(unsigned location=0;location<GAME_LOCATIONS;++location) {
+        scenery.location=location;scenery.location_flash=20;
+        check_frame(&scenery,5+(int)location);
+    }
     for(unsigned frame=0;frame<48;++frame) {
         g.frame=150+frame;g.lane=frame%3;g.voice=frame%2;
         g.hum=!g.voice;g.invincible=frame%5;g.hit_flash=frame%8;
@@ -52,7 +59,10 @@ int main(int argc,char **argv) {
         for(unsigned i=0;i<GAME_SHOTS;++i)
             g.shots[i]=(game_shot_t){-10+(int)((frame*17+i*53)%280),i%3,1};
         for(unsigned i=0;i<GAME_EFFECTS;++i)
-            g.effects[i]=(game_effect_t){(int)(i*47),i%3,1+frame%GAME_CAPTURE_FRAMES,i%3};
+            g.effects[i]=(game_effect_t){(int)(i*47),i%3,1+frame%GAME_CAPTURE_FRAMES,i%4};
+        g.location=frame%GAME_LOCATIONS;g.slime_ticks=frame%GAME_SLIME_FRAMES;
+        g.slimer=(game_slimer_t){-24+(int)(frame*7%300),frame%3,1,frame,
+                                  (frame+1)%3,1,frame%6};
         check_frame(&g,-1);
     }
     /* Real gameplay must create a capture at the collision, then expire it. */
@@ -77,6 +87,13 @@ int main(int argc,char **argv) {
     }
     game_init(&g,1);
     for(unsigned frame=0;frame<48;++frame){g.frame=frame;check_frame(&g,-1);}
+    game_init(&g,1);g.title=0;g.frame=150;g.slime_ticks=GAME_SLIME_FRAMES;
+    for(unsigned age=0;age<GAME_SLIME_FRAMES;++age) {
+        g.slime_ticks=GAME_SLIME_FRAMES-age;g.location=age%GAME_LOCATIONS;
+        check_frame(&g,-1);
+    }
+    g.location=1;g.slime_ticks=36;g.slimer=(game_slimer_t){170,1,1,18,2,2,0};
+    check_frame(&g,9);
     if(argc>1) {
         FILE *f=fopen(argv[1],"wb");if(!f){perror(argv[1]);return 1;}
         fprintf(f,"P6\n%d 320\n255\n",PREVIEW_WIDTH);

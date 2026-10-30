@@ -26,6 +26,7 @@ static int strip_y;
 volatile game_t game_diag;
 volatile unsigned display_frames, display_last_spectrum, display_frame_ticks;
 volatile unsigned display_peak_ticks, display_budget_misses, display_reset_stats;
+volatile unsigned display_transition_ticks;
 static void wait_ms(unsigned ms) {
     hwtimer_t t=hwtimer_alloc(); hwtimer_delay(t,ms*100000); hwtimer_free(t);
 }
@@ -87,8 +88,10 @@ enum {BG=0x0823, GREEN=0x87ed, WHITE=0xefbf, RED=0xf986,
       GOLD=0xfe60, CYAN=0x4eff, DARK=0x10a5, SUIT=0xc4ed,
       INK=0x0022, PANEL=0x10a6, MUTED=0x7bd1, PURPLE=0xc3ff};
 static int lane_y(unsigned lane){return 94+68*(int)lane;}
-static const uint16_t ghost_colors[3]={GREEN,CYAN,PURPLE};
-static const uint16_t ghost_shadows[3]={0x33c8,0x1b97,0x6194};
+static const uint16_t ghost_colors[4]={GREEN,CYAN,PURPLE,0x9fe5};
+static const uint16_t ghost_shadows[4]={0x33c8,0x1b97,0x6194,0x3c46};
+static const char *const location_names[GAME_LOCATIONS]={
+    "CITY STREETS","SEDGEWICK HOTEL","SUBWAY TUNNELS","ROOFTOPS"};
 
 static void sprite(int x,int y,const char *const rows[],unsigned height,
                    uint16_t body,uint16_t shadow,unsigned bob) {
@@ -129,6 +132,29 @@ static const char *const buster_sprite[]={
     " DDDs##s#   ","DGRDs##R##  ","DDCDs##s#FFD","DGRDs##sDDDD",
     " DDDsBBBs   ","  Ds####s   ","   s#ss#s   ","   s#  #s   ",
     "   s#  #s   ","  DDD  DDD  "};
+static const char *const slimer_sprite[]={
+    "      ####      ","    ##WW####    ","   ##WW#####s   ",
+    "  ###DD##DD##s  ","  ###WD##WD##s  ","  ###########ss ",
+    " ###DDDDDDDD#ss ","s###DWWWWWWD##ss","s###DRRRRRRD##ss",
+    " s##DDRRRRDD#ss ","  ####DDDD###ss ","  ###########ss ",
+    "   s########ss  ","    s######ss   ","     ss##ss     ",
+    "       ss       "};
+
+static void draw_slimer(const game_slimer_t *s) {
+    int y=lane_y(s->lane),bob=(int)(s->age/6)%4;
+    if(bob==3)bob=1;
+    sprite(s->x-16,y-16,slimer_sprite,16,s->flash?WHITE:ghost_colors[3],
+           ghost_shadows[3],bob);
+    /* Ectoplasmic droplets trail behind his flight path. */
+    fill(s->x+20,y+4,5,3,0x3c46);fill(s->x+29,y+9,3,2,0x3c46);
+    int drop=(int)(s->age/3)%6;
+    fill(s->x+12,y+16+drop,2,3,GREEN);
+    if(s->x>80 && s->age%45>=35) {
+        int next=lane_y(s->next_lane),top=y<next?y:next,bottom=y>next?y:next;
+        for(int yy=top+5;yy<bottom;yy+=8)fill(s->x,yy,1,3,0x3c46);
+        fill(s->x-4,next-3,9,1,GREEN);fill(s->x-4,next+3,9,1,GREEN);
+    }
+}
 
 static void draw_ghost(int x,int y,unsigned kind,unsigned frame,unsigned index) {
     unsigned phase=(frame/6+index)%4;
@@ -173,18 +199,21 @@ static void capture(const game_effect_t *e) {
             fill(x-half,y-12+row,1,1,GOLD);
             fill(x+half,y-12+row,1,1,CYAN);
         }
-        const char *const *rows=e->kind==1?wisp_sprite:
-                               (e->kind==2?phantom_sprite:ghost_sprite);
+        const char *const *rows=e->kind==3?slimer_sprite:(e->kind==1?wisp_sprite:
+                               (e->kind==2?phantom_sprite:ghost_sprite));
+        int columns=e->kind==3?16:12,count=e->kind==3?16:14;
         static const int spiral[8]={0,3,4,2,0,-2,-4,-2};
         int ghost_x=x+(age>6?spiral[((age-7)/2)%8]*(24-age)/17:0);
-        int width=age<7?24:24-(age-7),height=age<7?28:28-(age-7);
+        int width=(e->kind==3?32:24)-(age<7?0:age-7);
+        int height=(e->kind==3?32:28)-(age<7?0:age-7);
         int top=y-14+(age>6?(age-6)*2:0);
-        for(int row=0;row<14;++row)for(int col=0;col<12;++col) {
+        for(int row=0;row<count;++row)for(int col=0;col<columns;++col) {
             char c=rows[row][col];if(c==' ')continue;
-            int left=ghost_x-width/2+col*width/12,next=ghost_x-width/2+(col+1)*width/12;
-            int yy=top+row*height/14,bottom=top+(row+1)*height/14;
+            int left=ghost_x-width/2+col*width/columns,next=ghost_x-width/2+(col+1)*width/columns;
+            int yy=top+row*height/count,bottom=top+(row+1)*height/count;
             if(yy<y+20)fill(left,yy,next-left,bottom-yy,
-                c=='D'?INK:((age<6 && age%2)?WHITE:color));
+                c=='D'?INK:((age<6 && age%2)||c=='W'?WHITE:
+                (c=='R'?RED:(c=='s'?ghost_shadows[e->kind]:color))));
         }
     }
     /* Yellow/black hazard stripes, split lid and a lit containment indicator. */
@@ -199,7 +228,7 @@ static void capture(const game_effect_t *e) {
         fill(x-r,y+15-r,2,2,CYAN);fill(x+r,y+15-r,2,2,GOLD);
         fill(x-r/2,y+10-r,2,2,WHITE);fill(x+r/2,y+8-r,2,2,color);
     }
-    char points[8];snprintf(points,sizeof(points),"%u",100u<<e->kind);
+    char points[8];snprintf(points,sizeof(points),"%u",e->kind==3?500:100u<<e->kind);
     int tx=x-6;if(tx<2)tx=2;if(tx>226)tx=226;
     text(tx,y-20-e->age/4,points,1,age<24?WHITE:color);
 }
@@ -227,6 +256,25 @@ static void ellipse(int cx,int cy,int rx,int ry,uint16_t color) {
         int dy=(y-cy)*rx/ry,half=rx;
         while(half*half+dy*dy>rx*rx)--half;
         fill(cx-half,y,half*2+1,1,color);
+    }
+}
+
+static void slime_splats(const game_t *g) {
+    if(!g->slime_ticks)return;
+    int age=GAME_SLIME_FRAMES-(int)g->slime_ticks;
+    int drip=age/3,width=g->slime_ticks<12?2:4;
+    uint16_t body=g->slime_ticks<12?0x3c46:0x6e25;
+    /* Opposite corners, with the centre and HUD deliberately kept readable. */
+    ellipse(14,77,15,10,0x2365);ellipse(11,74,12,8,body);
+    ellipse(7,71,6,4,GREEN);disc(30,72,3,body);disc(25,62,2,GREEN);
+    fill(8,80,width,8+drip,body);ellipse(8+width/2,88+drip,width/2,2,body);
+    fill(22,78,width,4+drip/2,body);
+    ellipse(229,195,14,11,0x2365);ellipse(232,192,12,9,body);
+    ellipse(234,187,6,4,GREEN);disc(211,193,3,body);disc(217,183,2,GREEN);
+    fill(224,199,width,9+drip,body);ellipse(224+width/2,208+drip,width/2,2,body);
+    fill(235,200,width,4+drip/2,body);
+    if(age<18) {
+        fill(48,62,144,14,INK);text(56,65,"YOU GOT SLIMED",2,GREEN);
     }
 }
 
@@ -382,12 +430,7 @@ static void game_over_scene(const game_t *g) {
     }
 }
 
-static void draw_scene(const game_t *g) {
-    if(g->title){title_scene(g);return;}
-    if(g->over){game_over_scene(g);return;}
-    char label[32];
-    fill(0,strip_y,240,8,BG);
-    if(strip_y>=56 && strip_y<272) {
+static void city_background(void) {
     /* Static layered city: only actors and effects dirty strips during play. */
     fill(0,56,240,72,0x0844);fill(0,128,240,68,0x1065);
     fill(0,196,240,66,0x1086);
@@ -417,6 +460,71 @@ static void draw_scene(const game_t *g) {
             fill(x+5,y,4,3,0x324a);fill(x+20,y,4,3,0x324a);
         }
     }
+}
+
+static void location_background(unsigned location) {
+    if(location==0 || location==3) {
+        city_background();
+        if(location==3) {
+            /* Rooftop water tank, aerial and vents above the distant city. */
+            fill(63,112,3,46,0x526d);fill(88,112,3,46,0x526d);
+            fill(61,154,33,3,0x526d);fill(64,137,27,2,0x526d);
+            fill(59,86,37,29,0x6b4c);fill(60,87,5,26,0x9c70);
+            for(int x=69;x<94;x+=7)fill(x,87,1,27,0x4229);
+            ellipse(77,85,19,5,0x9c70);fill(58,113,39,3,0x31ab);
+            fill(116,70,2,45,0x7bd1);fill(104,76,26,2,0x526d);
+            fill(109,67,16,2,0x526d);fill(112,91,11,2,0x526d);
+            fill(104,241,32,19,0x31ab);fill(108,238,24,4,0x526d);
+            for(int x=109;x<132;x+=5)fill(x,245,2,10,INK);
+            fill(0,257,240,3,0x526d);
+        }
+        return;
+    }
+    if(location==1) {
+        /* Sedgewick: burgundy wallpaper, brass sconces and numbered doors. */
+        fill(0,56,240,204,0x2847);fill(0,57,240,3,0x8b4c);
+        for(int x=38;x<240;x+=16)fill(x,64,1,192,0x38a8);
+        for(unsigned lane=0;lane<3;++lane) {
+            int floor=lane_y(lane)+25;
+            fill(34,floor-4,206,4,0x5146);fill(34,floor-1,206,1,0xb44e);
+            for(int x=73;x<240;x+=62) {
+                fill(x-3,floor-49,34,47,0x8b4c);fill(x,floor-46,28,43,0x30c6);
+                fill(x+3,floor-42,22,20,0x5148);fill(x+3,floor-19,22,12,0x5148);
+                fill(x+21,floor-23,3,2,GOLD);
+                char room[8];snprintf(room,sizeof(room),"%u",(lane+1)*100+(unsigned)x/10);
+                text(x+7,floor-40,room,1,0xd5d5);
+                fill(x-17,floor-38,3,16,0x8b4c);fill(x-21,floor-37,11,6,0xb44e);
+                fill(x-19,floor-37,7,2,0xff16);
+            }
+        }
+    } else {
+        /* Subway: tiled walls, pillars, signage and a dark track bed. */
+        fill(0,56,240,204,0x10c7);
+        for(int y=61;y<260;y+=12) {
+            fill(32,y,208,1,0x2149);
+            if(y+12>strip_y && y<strip_y+8)
+                for(int x=36+(y/12%2)*12;x<240;x+=24)fill(x,y,1,12,0x2149);
+        }
+        for(int x=65;x<240;x+=72) {
+            fill(x,66,9,191,0x19eb);fill(x,66,2,191,0x3b4e);
+            fill(x-3,65,15,5,0x526d);fill(x-3,253,15,5,0x526d);
+        }
+        fill(92,68,84,14,INK);text(99,72,"DOWNTOWN",2,WHITE);
+        for(unsigned lane=0;lane<3;++lane) {
+            int y=lane_y(lane)+24;
+            fill(34,y-2,206,5,INK);fill(34,y-2,206,1,0xc56b);
+            for(int x=41;x<240;x+=18)fill(x,y+1,8,1,0x526d);
+        }
+    }
+}
+
+static void draw_scene(const game_t *g) {
+    if(g->title){title_scene(g);return;}
+    if(g->over){game_over_scene(g);return;}
+    char label[32];
+    fill(0,strip_y,240,8,BG);
+    if(strip_y>=56 && strip_y<272) {
+    location_background(g->boss_active?3:g->location);
     for(unsigned lane=0;lane<3;++lane) {
         int y=lane_y(lane);
         fill(6,y+25,228,1,0x29ac);fill(6,y+26,228,1,INK);
@@ -467,7 +575,11 @@ static void draw_scene(const game_t *g) {
             for(int x=64;x<154;x+=12)fill(x,y+12,6,2,RED);
             text(74,y-23,"DODGE",1,GOLD);
         }
-    } else text(8,52,"HIGH",1,g->lane==0?GREEN:MUTED);
+    } else {
+        text(8,52,"HIGH",1,g->lane==0?GREEN:MUTED);
+        text(88,52,g->slimer.active?"SLIMER - 500":location_names[g->location],1,
+             g->slimer.active?GREEN:(g->location_flash?GOLD:MUTED));
+    }
     text(8,120,"MID",1,g->lane==1?GREEN:MUTED);
     text(8,188,"LOW",1,g->lane==2?GREEN:MUTED);
     for(unsigned i=0;i<GAME_GHOSTS;++i)if(g->ghosts[i].active) {
@@ -475,6 +587,7 @@ static void draw_scene(const game_t *g) {
         /* Sprite and glow stay close to the original collision silhouette. */
         draw_ghost(ghost->x-12,lane_y(ghost->lane)-14,ghost->kind,g->frame,i);
     }
+    if(g->slimer.active)draw_slimer(&g->slimer);
     for(unsigned i=0;i<GAME_SHOTS;++i)if(g->shots[i].active) {
         int x=g->shots[i].x,y=lane_y(g->shots[i].lane);
         bolt(x,y,g->frame+i);
@@ -521,6 +634,7 @@ static void draw_scene(const game_t *g) {
         fill(17,139,206,35,PANEL);text(32,146,"WHO YOU GONNA",2,WHITE);
         text(76,161,"CALL",2,GREEN);
     }
+    slime_splats(g);
 }
 /* Exact changed-column bounds across a strip keep narrow animations off SPI. */
 static int changed_columns(const uint16_t *previous,const uint16_t *current,
@@ -571,6 +685,7 @@ void display_task(unsigned c_display) {
     game_t game;
     game_init(&game,get_reference_time());
     unsigned first=1;
+    unsigned previous_scene=UINT32_MAX;
     uint32_t packet[SPECTRUM_WORDS];
     hwtimer_t timer=hwtimer_alloc();
     while(1) {
@@ -586,8 +701,13 @@ void display_task(unsigned c_display) {
         render(&game,first);first=0;
         game_diag=game;
         ++display_frames;display_frame_ticks=get_reference_time()-start;
-        if(display_frame_ticks>display_peak_ticks)display_peak_ticks=display_frame_ticks;
-        if(display_frame_ticks>3333333)++display_budget_misses;
+        unsigned scene=game.title?4:(game.over?5:(game.boss_active?6:game.location));
+        if(scene!=previous_scene)display_transition_ticks=display_frame_ticks;
+        else {
+            if(display_frame_ticks>display_peak_ticks)display_peak_ticks=display_frame_ticks;
+            if(display_frame_ticks>3333333)++display_budget_misses;
+        }
+        previous_scene=scene;
         unsigned now=get_reference_time();
         if((unsigned)(now-start)<3333333)hwtimer_wait_until(timer,start+3333333);
     }

@@ -81,6 +81,7 @@ static void check_game(void) {
     for(unsigned i=0;i<30000;++i) {
         game_step(&g,(i/90)%3==0?120:((i/90)%3==1?220:330),(i%120)<80);
         assert(g.lane<3 && g.lives<=3 && g.over==!g.lives);
+        assert(g.location<GAME_LOCATIONS && g.slimer.lane<3 && g.slimer.next_lane<3);
         for(unsigned j=0;j<GAME_GHOSTS;++j)assert(g.ghosts[j].lane<3);
     }
 }
@@ -174,8 +175,51 @@ static void check_title_and_boss(void) {
     puts("PASS: speech-to-start, boss entrance, warned attacks, damage, victory and restart");
 }
 
+static void check_slimer_and_locations(void) {
+    game_t g;play_init(&g,42);g.score=300;g.spawn=900;
+    game_step(&g,0,0);
+    assert(g.slimer.active && g.slimer.hp==2 && g.slimer.age==1);
+    unsigned lane=g.slimer.lane,next=g.slimer.next_lane;
+    g.slimer.age=34;g.slimer.x=200;
+    game_step(&g,0,0);assert(g.slimer.lane==lane && g.slimer.age==35);
+    for(unsigned i=0;i<10;++i)game_step(&g,0,0);
+    assert(g.slimer.lane==next && g.slimer.next_lane==(next+1)%3);
+    g.slimer.age=44;g.slimer.x=80;lane=g.slimer.lane;
+    game_step(&g,0,0);assert(g.slimer.lane==lane); /* No point-blank lane hop. */
+    g.slimer.x=110;g.slimer.lane=0;
+    g.shots[0]=(game_shot_t){90,0,1};game_step(&g,0,0);
+    assert(g.slimer.active && g.slimer.hp==1 && g.slimer.flash && g.score==300);
+    g.shots[0]=(game_shot_t){90,0,1};game_step(&g,0,0);
+    assert(!g.slimer.active && g.score==800 && g.best==800 && g.slimer_next==1550);
+    assert(g.effects[0].kind==3 && g.effects[0].age==1);
+    game_step(&g,0,0);assert(g.location==1 && g.location_flash==60);
+    /* Slimer crossing another lane is safe; a collision slimes once. */
+    g.slimer=(game_slimer_t){59,(g.lane+1)%3,1,0,g.lane,2,0};
+    game_step(&g,0,0);assert(g.lives==3 && !g.slime_ticks);
+    g.slimer.x=59;g.slimer.lane=g.lane;
+    game_step(&g,0,0);assert(g.lives==2 && g.slime_ticks==GAME_SLIME_FRAMES);
+    assert(!g.slimer.active && g.slimer_next==1550);
+    g.slimer=(game_slimer_t){59,g.lane,1,0,g.lane,2,0};
+    game_step(&g,0,0);assert(g.lives==2 && g.slime_ticks==GAME_SLIME_FRAMES-1);
+    g.slimer.x=-24;game_step(&g,0,0);assert(!g.slimer.active);
+    for(unsigned i=0;i<GAME_SLIME_FRAMES;++i)game_step(&g,0,0);
+    assert(!g.slime_ticks);
+    g.boss_next=1000;g.score=1000;g.slimer.active=1;
+    game_step(&g,0,0);assert(g.boss_active && !g.slimer.active);
+    play_init(&g,1);g.slimer_next=UINT32_MAX;
+    for(unsigned location=0;location<GAME_LOCATIONS*2;++location) {
+        g.score=location*750;game_step(&g,0,0);
+        assert(g.location==location%GAME_LOCATIONS);
+    }
+    g.over=1;g.lives=0;g.restart_ready=1;g.slime_ticks=20;g.slimer.active=1;
+    game_step(&g,0,1);
+    assert(!g.location && !g.slime_ticks && !g.slimer.active && g.slimer_next==300);
+    puts("PASS: Slimer lane warnings, two-hit capture/reward, slime damage, locations and cleanup");
+}
+
 int main(void) {
     check_pitch();check_controls();check_game();check_ghost_types();
     check_title_and_boss();
+    check_slimer_and_locations();
     puts("PASS: hum/speech filter, pitch, ghost speeds/rarity/rewards, lives and restart");
 }

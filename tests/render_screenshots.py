@@ -25,17 +25,19 @@ def main():
         ], cwd=ROOT, check=True)
         subprocess.run([str(executable), str(preview)], check=True)
         magic, dimensions, maximum, pixels = preview.read_bytes().split(b"\n", 3)
-        if (magic, dimensions, maximum) != (b"P6", b"1200 320", b"255"):
+        if (magic, dimensions, maximum) != (b"P6", b"2400 320", b"255"):
             raise ValueError("Unexpected renderer preview format")
-        if len(pixels) != 1200 * 320 * 3:
+        if len(pixels) != 2400 * 320 * 3:
             raise ValueError("Incomplete renderer preview")
 
         destination = ROOT / "docs" / "images"
         destination.mkdir(parents=True, exist_ok=True)
-        for panel, name in enumerate(("title", "gameplay", "game-over", "stay-puft", "traps")):
+        names = ("title", "gameplay", "game-over", "stay-puft", "traps",
+                 "slimer", "hotel", "subway", "rooftops", "slimed")
+        for panel, name in enumerate(names):
             rows = b"".join(
-                b"\0" + pixels[(y * 1200 + panel * 240) * 3:
-                                (y * 1200 + panel * 240 + 240) * 3]
+                b"\0" + pixels[(y * 2400 + panel * 240) * 3:
+                                (y * 2400 + panel * 240 + 240) * 3]
                 for y in range(320)
             )
             png = (b"\x89PNG\r\n\x1a\n"

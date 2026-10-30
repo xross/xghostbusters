@@ -68,6 +68,16 @@ def main():
         measure("three simultaneous traps", 0.45)
         inject(["boss_active = 1", "boss_frame = 90", "boss_hp = 0", "boss_defeat = 1"])
         measure("Stay Puft marshmallow burst", 0.8)
+        for location, name in enumerate(("city", "hotel", "subway", "rooftops")):
+            inject(["boss_active = 0", "boss_defeat = 0", "boss_next = 999999",
+                    f"score = {location * 750}", "slimer_next = 999999", "spawn = 600",
+                    "invincible = 600", "slime_ticks = 45", "slimer.active = 1",
+                    "slimer.x = 225", "slimer.lane = 1", "slimer.next_lane = 2",
+                    "slimer.age = 24", "slimer.hp = 2", "slimer.flash = 0"])
+            measure(f"Slimer and slime splats in {name}", 0.55)
+        inject(["slimer.active = 0", "slime_ticks = 0", "effects[0].x = 170",
+                "effects[0].lane = 1", "effects[0].age = 1", "effects[0].kind = 3"])
+        measure("Slimer trap capture", 0.35)
     finally:
         reload()
     print("PASS: animated scenes meet the 30 fps work budget; title screen restored")
