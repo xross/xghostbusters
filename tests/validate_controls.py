@@ -15,7 +15,12 @@ TEMP = tempfile.gettempdir()
 
 def load():
     subprocess.run(["xrun", "--adapter-id", "94R8235L", "--noreset", IMAGE], check=True)
-    time.sleep(1.3)
+    time.sleep(2.2)
+    subprocess.run(["say", "-r", "155", "Go"], check=True)
+    time.sleep(1)
+    data = snapshot()
+    assert "title = 0" in data, "Speech did not start the game"
+    return int(re.search(r"shots_fired = (\d+)", data)[1])
 
 
 def snapshot():
@@ -34,7 +39,7 @@ def snapshot():
 
 
 for hz, lane in ((120, 2), (220, 1), (330, 0), (0, 0)):
-    load()
+    before_shots = load()
     with tempfile.NamedTemporaryFile(suffix=".wav", dir=TEMP) as output:
         # Last trial slides from low to high with harmonics and vibrato.
         phase = 0
@@ -58,21 +63,21 @@ for hz, lane in ((120, 2), (220, 1), (330, 0), (0, 0)):
             assert int(re.search(r"lives = \d+, lane = (\d+)", data)[1]) == lane
             assert "voice = 0" in data and "hum = 1" in data, "Hum should move without firing"
             assert not re.search(r"shots = .*active = 1", data), "Hum fired a shot"
-            assert "shots_fired = 0" in data, "Hum onset fired a shot"
+            assert int(re.search(r"shots_fired = (\d+)", data)[1]) == before_shots, "Hum onset fired a shot"
         finally:
             player.wait()
         time.sleep(0.15)
         data = snapshot()
         assert "voice = 0" in data, "VAD hangover fired after the hum"
 
-load()
+before_shots = load()
 speaker = subprocess.Popen(["say", "-r", "155", "Ghostbusters, fire the proton pack. Catch the ghosts. Who are you going to call?"])
 try:
     time.sleep(1.5)
     data = snapshot()
     # Speech contains vowels and pauses that deliberately inhibit firing, so
     # inspect cumulative shots rather than requiring fire at one arbitrary hop.
-    assert int(re.search(r"shots_fired = (\d+)", data)[1]) > 0, "Speech produced no proton shots"
+    assert int(re.search(r"shots_fired = (\d+)", data)[1]) > before_shots, "Speech produced no proton shots"
 finally:
     speaker.wait()
 print("PASS: acoustic hum lanes without firing, quiet release, and speech-driven proton shots")
