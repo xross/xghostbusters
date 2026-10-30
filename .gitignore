@@ -1,0 +1,12 @@
+/build*/
+/bin/
+/app_xghostbusters/build*/
+/app_xghostbusters/bin/
+/.venv/
+__pycache__/
+*.py[cod]
+*.dSYM/
+.DS_Store
+/validate_game
+/validate_display
+/ghostbusters-preview.*
